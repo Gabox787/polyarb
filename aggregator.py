@@ -77,11 +77,36 @@ def _parse_rss(xml_text: str, source_name: str) -> list[NewsItem]:
     return items
  
  
+SEEN_FILE = "seen_news.json"
+ 
+ 
 class NewsAggregator:
     def __init__(self):
-        self._seen: set[str] = set()           # uid dedup set
+        self._seen: set[str] = self._load_seen()
         self._queue: asyncio.Queue = asyncio.Queue()
         self._session: aiohttp.ClientSession | None = None
+ 
+    def _load_seen(self) -> set[str]:
+        import json
+        from pathlib import Path
+        try:
+            if Path(SEEN_FILE).exists():
+                data = json.loads(Path(SEEN_FILE).read_text())
+                seen = set(data.get("uids", []))
+                log.info("Loaded %d seen UIDs from disk", len(seen))
+                return seen
+        except Exception as e:
+            log.warning("Could not load seen file: %s", e)
+        return set()
+ 
+    def _save_seen(self):
+        import json
+        from pathlib import Path
+        try:
+            recent = list(self._seen)[-2000:]
+            Path(SEEN_FILE).write_text(json.dumps({"uids": recent}))
+        except Exception as e:
+            log.warning("Could not save seen file: %s", e)
  
     async def start(self):
         connector = aiohttp.TCPConnector(ttl_dns_cache=300)
@@ -117,6 +142,7 @@ class NewsAggregator:
             if len(self._seen) > 5000:
                 self._seen = set(list(self._seen)[-2000:])
  
+            self._save_seen()
             await asyncio.sleep(POLL_INTERVAL)
  
     async def _fetch_feed(self, feed: dict) -> list[NewsItem]:
