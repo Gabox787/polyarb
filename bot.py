@@ -253,18 +253,39 @@ async def cmd_help(message: Message):
  
  
 async def _fetch_btc_price_loop():
-    """Фоновая задача — тянет цену BTC с Binance каждые 2 сек для графика."""
-    url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
+    """Фоновая задача — тянет цену BTC каждые 5 сек для графика.
+    Пробует несколько источников: CoinGecko → Kraken → Bybit.
+    """
+    sources = [
+        {
+            "url": "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
+            "parse": lambda d: float(d["bitcoin"]["usd"]),
+        },
+        {
+            "url": "https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
+            "parse": lambda d: float(d["result"]["XXBTZUSD"]["c"][0]),
+        },
+        {
+            "url": "https://api.bybit.com/v5/market/tickers?category=spot&symbol=BTCUSDT",
+            "parse": lambda d: float(d["result"]["list"][0]["lastPrice"]),
+        },
+    ]
     async with aiohttp.ClientSession() as session:
         while True:
-            try:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as r:
-                    if r.status == 200:
-                        data = await r.json()
-                        api_server.push_price(float(data["price"]))
-            except Exception:
-                pass
-            await asyncio.sleep(2)
+            for src in sources:
+                try:
+                    async with session.get(
+                        src["url"], timeout=aiohttp.ClientTimeout(total=8)
+                    ) as r:
+                        if r.status == 200:
+                            data = await r.json()
+                            price = src["parse"](data)
+                            if price and price > 0:
+                                api_server.push_price(price)
+                                break  # успех — не пробуем следующий
+                except Exception:
+                    continue  # пробуем следующий источник
+            await asyncio.sleep(5)
  
  
 # ------------------------------------------------------------------ #
