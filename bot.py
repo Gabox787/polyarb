@@ -253,11 +253,7 @@ async def cmd_help(message: Message):
 async def _fetch_btc_price_loop():
     """Фоновая задача — тянет цену BTC с Binance каждые 2 сек для графика."""
     url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
-    try:
-        connector = aiohttp.TCPConnector(resolver=aiohttp.AsyncResolver())
-    except RuntimeError:
-        connector = aiohttp.TCPConnector()
-    async with aiohttp.ClientSession(connector=connector) as session:
+    async with aiohttp.ClientSession() as session:
         while True:
             try:
                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as r:
