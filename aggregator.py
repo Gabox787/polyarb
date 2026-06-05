@@ -84,15 +84,7 @@ class NewsAggregator:
         self._session: aiohttp.ClientSession | None = None
  
     async def start(self):
-        try:
-            resolver = aiohttp.AsyncResolver()
-        except RuntimeError:
-            log.warning("aiodns not available, using default resolver")
-            resolver = aiohttp.DefaultResolver()
-        connector = aiohttp.TCPConnector(
-            resolver=resolver,
-            ttl_dns_cache=300,
-        )
+        connector = aiohttp.TCPConnector(ttl_dns_cache=300)
         self._session = aiohttp.ClientSession(
             connector=connector, headers=HEADERS
         )
