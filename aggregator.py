@@ -125,6 +125,10 @@ class NewsAggregator:
         return await self._queue.get()
  
     async def _poll_loop(self):
+        # Первый прогон — помечаем ВСЕ текущие новости как виденные
+        # без отправки в очередь. Торгуем только реально новыми заголовками.
+        first_run = True
+ 
         while True:
             tasks = [self._fetch_feed(f) for f in RSS_FEEDS]
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -135,8 +139,25 @@ class NewsAggregator:
                 for item in res:
                     if item.uid not in self._seen:
                         self._seen.add(item.uid)
+                        if first_run:
+                            continue  # просто запоминаем, не торгуем
+                        # Фильтр по возрасту — игнорируем старше 15 минут
+                        try:
+                            pub = item.pub_date
+                            if pub.tzinfo is None:
+                                pub = pub.replace(tzinfo=timezone.utc)
+                            age_min = (datetime.now(timezone.utc) - pub).total_seconds() / 60
+                            if age_min > 15:
+                                log.debug("SKIP old (%.0f min): %s", age_min, item.headline[:50])
+                                continue
+                        except Exception:
+                            pass
                         await self._queue.put(item)
                         log.info("NEW  [%s] %s", item.source, item.headline[:70])
+ 
+            if first_run:
+                log.info("First run: marked %d headlines as seen, waiting for new ones", len(self._seen))
+                first_run = False
  
             # keep dedup set bounded
             if len(self._seen) > 5000:
