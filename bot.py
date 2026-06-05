@@ -43,11 +43,13 @@ recent_news: list[dict] = []          # last 10 triggered news items
 #  Owner-only guard
 # ------------------------------------------------------------------ #
 def owner_only(func):
-    async def wrapper(message: Message, *args, **kwargs):
+    import functools
+    @functools.wraps(func)
+    async def wrapper(message: Message, **kwargs):
         if message.from_user.id != OWNER_ID:
             await message.answer("⛔ Access denied.")
             return
-        return await func(message, *args, **kwargs)
+        return await func(message, **kwargs)
     return wrapper
  
  
