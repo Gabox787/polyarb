@@ -107,4 +107,14 @@ def route(signal: Signal, markets: list[PolyMarket]) -> list[TradeDecision]:
                  market.question[:40], side, effective_edge, signal.coin)
  
     decisions.sort(key=lambda d: d.edge, reverse=True)
-    return decisions[:3]   # top-3 best opportunities only
+ 
+    # Возвращаем топ-3 но с разными рынками (диверсификация)
+    seen_markets = set()
+    unique_decisions = []
+    for d in decisions:
+        if d.market.market_id not in seen_markets:
+            seen_markets.add(d.market.market_id)
+            unique_decisions.append(d)
+        if len(unique_decisions) >= 3:
+            break
+    return unique_decisions
