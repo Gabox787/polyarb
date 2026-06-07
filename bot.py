@@ -292,11 +292,19 @@ async def _fetch_btc_price_loop():
 #  Entry point
 # ------------------------------------------------------------------ #
 async def main():
+    global running, _task
     api_server.init(trader, recent_news, {})
     await api_server.start(port=int(os.getenv("PORT", "8080")))
     await aggregator.start()
     await scanner.start()
     asyncio.create_task(_fetch_btc_price_loop())
+ 
+    # Автостарт — запускаем торговлю сразу без ручного /start
+    running = True
+    api_server.set_running(True)
+    _task = asyncio.create_task(trading_loop())
+    log.info("Auto-started trading loop")
+ 
     log.info("Starting bot polling…")
     try:
         await dp.start_polling(bot)
