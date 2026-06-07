@@ -24,18 +24,19 @@ MAX_OPEN_POSITIONS = 5
  
 # NLP — ключевые слова (без тяжёлых зависимостей)
 BULLISH_KEYWORDS = [
-    "surge", "rally", "bullish", "soar", "pump", "moon", "breakout",
+    "surge", "rally", "bullish", "soar", "breakout",
     "all-time high", "ath", "adoption", "institutional", "etf approved",
-    "bitcoin etf", "upgrade", "mainnet", "partnership", "buy",
-    "record", "rise", "gain", "jump", "approve", "launch",
+    "bitcoin etf", "upgrade", "mainnet", "partnership",
+    "record high", "new high", "gain", "jump", "approve", "launch",
     "рост", "вырос", "одобр", "рекорд",
 ]
  
 BEARISH_KEYWORDS = [
-    "crash", "dump", "bearish", "plunge", "fall", "ban", "hack",
-    "exploit", "bankruptcy", "sec", "lawsuit", "fraud", "sell",
+    "crash", "bloodbath", "dump", "bearish", "plunge", "fall", "ban", "hack",
+    "exploit", "bankruptcy", "sec", "lawsuit", "fraud",
     "collapse", "fear", "drop", "decline", "warning", "risk",
-    "sanction", "restrict", "blocked", "crackdown",
+    "sanction", "restrict", "blocked", "crackdown", "sell-off", "selloff",
+    "correction", "slump", "tumble", "sinks", "dives", "wipes",
     "падение", "запрет", "взлом", "мошен",
 ]
  
