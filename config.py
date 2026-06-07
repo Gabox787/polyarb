@@ -9,6 +9,9 @@ RSS_FEEDS = [
     {"name": "CoinDesk",      "url": "https://feeds.feedburner.com/CoinDesk"},
     {"name": "CoinTelegraph", "url": "https://cointelegraph.com/rss"},
     {"name": "Decrypt",       "url": "https://decrypt.co/feed"},
+    {"name": "Bitcoinist",    "url": "https://bitcoinist.com/feed/"},
+    {"name": "NewsBTC",       "url": "https://www.newsbtc.com/feed/"},
+    {"name": "CryptoSlate",   "url": "https://cryptoslate.com/feed/"},
 ]
  
 # Интервал опроса RSS (секунды)
@@ -40,7 +43,7 @@ BEARISH_KEYWORDS = [
 # Монеты → маркеры для поиска рынков
 COIN_KEYWORDS = {
     "BTC":  ["bitcoin", "btc", "satoshi", "saylor", "strategy", "mstr",
-              "blackrock", "grayscale", "microstrategy"],
+             "blackrock", "grayscale", "microstrategy"],
     "ETH":  ["ethereum", "eth", "ether", "vitalik", "eip", "shapella"],
     "SOL":  ["solana", "sol", "solana's"],
     "BNB":  ["binance", "bnb", "cz "],
