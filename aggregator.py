@@ -126,10 +126,9 @@ class NewsAggregator:
  
     async def _poll_loop(self):
         """
-        Простая логика без хитрых фильтров:
-        - первый прогон: запоминаем все текущие UIDs, не торгуем
-        - следующие прогоны: всё новое (не виденное) → в очередь
-        Возраст новости НЕ проверяем — RSS сам выдаёт актуальные заголовки.
+        - первый прогон: запоминаем все текущие UIDs + заголовки, не торгуем
+        - следующие прогоны: всё новое → в очередь
+        Дедупликация работает и после редеплоя — храним заголовки в _seen.
         """
         first_run = True
  
@@ -143,13 +142,18 @@ class NewsAggregator:
                     log.warning("Feed fetch error: %s", res)
                     continue
                 for item in res:
-                    if item.uid not in self._seen:
-                        self._seen.add(item.uid)
-                        if first_run:
-                            continue  # первый прогон — только запоминаем
-                        await self._queue.put(item)
-                        new_count += 1
-                        log.info("NEW  [%s] %s", item.source, item.headline[:70])
+                    # Дедупликация по UID И по заголовку (защита от редеплоев)
+                    import hashlib
+                    headline_uid = "h:" + hashlib.md5(item.headline.lower().encode()).hexdigest()[:12]
+                    if item.uid in self._seen or headline_uid in self._seen:
+                        continue
+                    self._seen.add(item.uid)
+                    self._seen.add(headline_uid)
+                    if first_run:
+                        continue  # первый прогон — только запоминаем
+                    await self._queue.put(item)
+                    new_count += 1
+                    log.info("NEW  [%s] %s", item.source, item.headline[:70])
  
             if first_run:
                 log.info("First run: marked %d headlines as seen", len(self._seen))
@@ -160,8 +164,8 @@ class NewsAggregator:
                 log.debug("No new headlines this cycle (total seen: %d)", len(self._seen))
  
             # keep dedup set bounded
-            if len(self._seen) > 5000:
-                self._seen = set(list(self._seen)[-2000:])
+            if len(self._seen) > 10000:
+                self._seen = set(list(self._seen)[-4000:])
  
             self._save_seen()
             await asyncio.sleep(POLL_INTERVAL)
