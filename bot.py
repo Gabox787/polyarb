@@ -258,16 +258,16 @@ async def _fetch_btc_price_loop():
     """
     sources = [
         {
-            "url": "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
-            "parse": lambda d: float(d["bitcoin"]["usd"]),
-        },
-        {
             "url": "https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
             "parse": lambda d: float(d["result"]["XXBTZUSD"]["c"][0]),
         },
         {
             "url": "https://api.bybit.com/v5/market/tickers?category=spot&symbol=BTCUSDT",
             "parse": lambda d: float(d["result"]["list"][0]["lastPrice"]),
+        },
+        {
+            "url": "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
+            "parse": lambda d: float(d["bitcoin"]["usd"]),
         },
     ]
     async with aiohttp.ClientSession() as session:
@@ -285,7 +285,7 @@ async def _fetch_btc_price_loop():
                                 break  # успех — не пробуем следующий
                 except Exception:
                     continue  # пробуем следующий источник
-            await asyncio.sleep(5)
+            await asyncio.sleep(30)  # 30 сек — достаточно для графика, не бьём rate limit
  
  
 # ------------------------------------------------------------------ #
