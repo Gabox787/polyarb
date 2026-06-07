@@ -139,29 +139,36 @@ async def trading_loop():
  
  
 async def _monitor_open_positions():
-    """Check open positions — close if market repriced in our favour."""
+    """Close positions by price movement OR by time (max 4 hours)."""
     if not trader.open_positions:
         return
  
+    import time
+    MAX_AGE = 4 * 3600  # 4 часа
+ 
     for pos in list(trader.open_positions):
+        age_sec = time.time() - pos.open_ts
+        current = pos.entry_price  # дефолт если рынок не найден
+ 
         markets = await scanner.find_markets(pos.coin)
         target = next((m for m in markets if m.market_id == pos.market_id), None)
-        if target is None:
-            continue
+        if target is not None:
+            current = target.yes_price if pos.side == "YES" else target.no_price
  
-        current = target.yes_price if pos.side == "YES" else target.no_price
- 
-        # close if price moved >3% in our favour OR >8% against us (stop-loss)
         pnl_ratio = (current - pos.entry_price) / pos.entry_price
         if pos.side == "NO":
             pnl_ratio = -pnl_ratio
  
-        if pnl_ratio >= 0.03 or pnl_ratio <= -0.08:
+        timeout = age_sec >= MAX_AGE
+        should_close = pnl_ratio >= 0.03 or pnl_ratio <= -0.08 or timeout
+ 
+        if should_close:
             pnl = trader.close_position(pos, current)
             icon = "✅" if pnl > 0 else "❌"
+            reason = "таймаут 4ч" if timeout else ("тейк +3%" if pnl > 0 else "стоп -8%")
             await _notify(
-                f"{icon} <b>Сделка закрыта</b>  {pos.pos_id}\n"
-                f"{'+'if pnl>=0 else ''}<b>${pnl:.4f}</b>\n"
+                f"{icon} <b>Сделка закрыта</b> [{reason}]  {pos.pos_id}\n"
+                f"{'+'if pnl>=0 else ''}$<b>{abs(pnl):.4f}</b>\n"
                 f"{pos.question[:50]}\n"
                 f"Entry: {pos.entry_price:.4f} → Exit: {current:.4f}\n"
                 f"💰 Баланс: ${trader.balance:.2f}"
