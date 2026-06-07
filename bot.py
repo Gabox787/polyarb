@@ -74,6 +74,7 @@ async def trading_loop():
         # --- NLP ---
         signal = analyze(news.headline, news.source)
         if signal is None:
+            log.info("SKIP (no signal): %s", news.headline[:60])
             continue
  
         log.info("Signal: %s", signal)
@@ -83,13 +84,16 @@ async def trading_loop():
         if not stale_markets:
             all_markets = await scanner.find_markets(signal.coin)
             if not all_markets:
-                log.info("No markets for %s", signal.coin)
+                log.info("SKIP (no markets for %s): %s", signal.coin, news.headline[:50])
                 continue
             stale_markets = all_markets
+ 
+        log.info("Found %d markets for %s", len(stale_markets), signal.coin)
  
         # --- route to trade ---
         decisions = route(signal, stale_markets)
         if not decisions:
+            log.info("SKIP (no decisions after routing): %s", news.headline[:50])
             continue
  
         # --- execute best trade ---
