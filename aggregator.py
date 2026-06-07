@@ -125,13 +125,19 @@ class NewsAggregator:
         return await self._queue.get()
  
     async def _poll_loop(self):
-        # Первый прогон — помечаем ВСЕ текущие новости как виденные
-        # без отправки в очередь. Торгуем только реально новыми заголовками.
+        """
+        Простая логика без хитрых фильтров:
+        - первый прогон: запоминаем все текущие UIDs, не торгуем
+        - следующие прогоны: всё новое (не виденное) → в очередь
+        Возраст новости НЕ проверяем — RSS сам выдаёт актуальные заголовки.
+        """
         first_run = True
  
         while True:
             tasks = [self._fetch_feed(f) for f in RSS_FEEDS]
             results = await asyncio.gather(*tasks, return_exceptions=True)
+            new_count = 0
+ 
             for res in results:
                 if isinstance(res, Exception):
                     log.warning("Feed fetch error: %s", res)
@@ -140,24 +146,18 @@ class NewsAggregator:
                     if item.uid not in self._seen:
                         self._seen.add(item.uid)
                         if first_run:
-                            continue  # просто запоминаем, не торгуем
-                        # Фильтр по возрасту — игнорируем старше 15 минут
-                        try:
-                            pub = item.pub_date
-                            if pub.tzinfo is None:
-                                pub = pub.replace(tzinfo=timezone.utc)
-                            age_min = (datetime.now(timezone.utc) - pub).total_seconds() / 60
-                            if age_min > 15:
-                                log.debug("SKIP old (%.0f min): %s", age_min, item.headline[:50])
-                                continue
-                        except Exception:
-                            pass
+                            continue  # первый прогон — только запоминаем
                         await self._queue.put(item)
+                        new_count += 1
                         log.info("NEW  [%s] %s", item.source, item.headline[:70])
  
             if first_run:
-                log.info("First run: marked %d headlines as seen, waiting for new ones", len(self._seen))
+                log.info("First run: marked %d headlines as seen", len(self._seen))
                 first_run = False
+            elif new_count > 0:
+                log.info("Added %d new headlines to queue", new_count)
+            else:
+                log.debug("No new headlines this cycle (total seen: %d)", len(self._seen))
  
             # keep dedup set bounded
             if len(self._seen) > 5000:
