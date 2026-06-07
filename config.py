@@ -11,7 +11,6 @@ RSS_FEEDS = [
     {"name": "Decrypt",       "url": "https://decrypt.co/feed"},
     {"name": "Bitcoinist",    "url": "https://bitcoinist.com/feed/"},
     {"name": "NewsBTC",       "url": "https://www.newsbtc.com/feed/"},
-    {"name": "CryptoSlate",   "url": "https://cryptoslate.com/feed/"},
 ]
  
 # Интервал опроса RSS (секунды)
