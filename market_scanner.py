@@ -18,6 +18,12 @@ COIN_MARKET_KEYWORDS = {
     "GENERAL": [],
 }
 
+# Рынки которые больше не торгуются — блокируем по ключевым словам в вопросе
+BLOCKED_QUESTION_KEYWORDS = [
+    "gta vi", "gta6", "gta 6",
+    "before gta",
+]
+
 # How old (seconds) a last-trade timestamp can be and still count as "stale"
 STALE_THRESHOLD_SEC = 30
 
@@ -144,6 +150,12 @@ class MarketScanner:
     def _parse_market(self, item: dict) -> PolyMarket | None:
         question = item.get("question", "") or item.get("title", "")
         if not question:
+            return None
+
+        # Блокируем неактивные рынки по ключевым словам
+        q_lower = question.lower()
+        if any(kw in q_lower for kw in BLOCKED_QUESTION_KEYWORDS):
+            log.debug("BLOCKED market: %s", question[:60])
             return None
 
         # --- prices: try CLOB tokens first, then direct fields ---
