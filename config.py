@@ -41,6 +41,8 @@ BEARISH_KEYWORDS = [
     "shut down", "shuts down", "shutdown", "closes", "exit", "exits",
     "outflow", "outflows", "liquidat", "probe", "investigat", "charges",
     "sued", "sues", "penalty", "fine", "seized", "arrest",
+    "accused", "accuses", "allegation", "selling off", "dumps",
+    "hack", "exploit", "vulnerability", "breach", "stolen", "theft",
     "падение", "запрет", "взлом", "мошен",
 ]
 
