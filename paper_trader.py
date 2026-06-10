@@ -5,19 +5,22 @@ import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Literal
- 
+
 from config import INITIAL_BALANCE, BET_SIZE, MIN_EDGE, MAX_OPEN_POSITIONS
 from market_scanner import PolyMarket
 from nlp_engine import Signal
- 
+
 log = logging.getLogger(__name__)
- 
+
 Side = Literal["YES", "NO"]
 State = Literal["OPEN", "CLOSED_WIN", "CLOSED_LOSS", "CLOSED_NEUTRAL"]
- 
+
+# Render стирает рабочую папку при редеплое, но /tmp живёт дольше
+# Используем оба пути — основной + резервный в /tmp
 SAVE_FILE = Path("paper_trades.json")
- 
- 
+SAVE_FILE_TMP = Path("/tmp/paper_trades_backup.json")
+
+
 @dataclass
 class Position:
     pos_id:     str
@@ -34,30 +37,30 @@ class Position:
     news_headline: str = ""
     coin:       str = ""
     sentiment:  float = 0.0
- 
+
     @property
     def shares(self) -> float:
         """How many outcome shares we hold."""
         return self.size_usdc / self.entry_price if self.entry_price > 0 else 0
- 
+
     def current_value(self, current_price: float) -> float:
         return self.shares * current_price
- 
+
     def unrealised_pnl(self, current_price: float) -> float:
         return self.current_value(current_price) - self.size_usdc
- 
- 
+
+
 class PaperTrader:
     def __init__(self):
         self.balance: float = INITIAL_BALANCE
         self.positions: list[Position] = []
         self._pos_counter: int = 0
         self._load()
- 
+
     # ------------------------------------------------------------------ #
     #  Public API
     # ------------------------------------------------------------------ #
- 
+
     def open_position(
         self,
         market: PolyMarket,
@@ -72,7 +75,7 @@ class PaperTrader:
         if self.balance < BET_SIZE:
             log.info("Insufficient paper balance: $%.2f", self.balance)
             return None
- 
+
         # Не открывать позицию на рынок где уже есть открытая
         already_open = any(
             p.market_id == market.market_id and p.state == "OPEN"
@@ -81,7 +84,7 @@ class PaperTrader:
         if already_open:
             log.info("Already have open position on market %s", market.question[:40])
             return None
- 
+
         # Не торговать одну новость дважды
         already_traded = any(
             p.news_headline == signal.headline
@@ -90,12 +93,12 @@ class PaperTrader:
         if already_traded:
             log.info("Already traded this headline: %s", signal.headline[:50])
             return None
- 
+
         price = market.yes_price if side == "YES" else market.no_price
         if price <= 0 or price >= 1:
             log.warning("Bad price %.4f for %s", price, market.question[:40])
             return None
- 
+
         self._pos_counter += 1
         pos = Position(
             pos_id       = f"P{self._pos_counter:04d}",
@@ -114,7 +117,7 @@ class PaperTrader:
         log.info("OPEN  %s | %s @ %.4f | edge=%.1f%% | %s",
                  pos.pos_id, side, price, edge * 100, market.question[:50])
         return pos
- 
+
     def close_position(self, pos: Position, current_price: float) -> float:
         if pos.state != "OPEN":
             return 0.0
@@ -133,23 +136,23 @@ class PaperTrader:
         self._save()
         log.info("CLOSE %s | pnl=%.4f | state=%s", pos.pos_id, pnl, pos.state)
         return pnl
- 
+
     # ------------------------------------------------------------------ #
     #  Stats helpers
     # ------------------------------------------------------------------ #
- 
+
     @property
     def open_positions(self) -> list[Position]:
         return [p for p in self.positions if p.state == "OPEN"]
- 
+
     @property
     def closed_positions(self) -> list[Position]:
         return [p for p in self.positions if p.state != "OPEN"]
- 
+
     @property
     def total_pnl(self) -> float:
         return round(sum(p.pnl for p in self.closed_positions), 4)
- 
+
     @property
     def win_rate(self) -> float:
         closed = self.closed_positions
@@ -157,7 +160,7 @@ class PaperTrader:
             return 0.0
         wins = sum(1 for p in closed if p.state == "CLOSED_WIN")
         return round(wins / len(closed) * 100, 1)
- 
+
     def stats_text(self) -> str:
         open_ps = self.open_positions
         closed = self.closed_positions
@@ -178,7 +181,7 @@ class PaperTrader:
                     f"  {p.pos_id} | {p.side} | ${p.size_usdc:.0f} @ {p.entry_price:.4f} | {p.question[:45]}"
                 )
         return "\n".join(lines)
- 
+
     def last_trades_text(self, n: int = 5) -> str:
         recent = sorted(self.closed_positions,
                         key=lambda p: p.close_ts, reverse=True)[:n]
@@ -193,11 +196,11 @@ class PaperTrader:
                 f"{p.question[:40]}"
             )
         return "\n".join(lines)
- 
+
     # ------------------------------------------------------------------ #
     #  Persistence
     # ------------------------------------------------------------------ #
- 
+
     def _save(self):
         try:
             data = {
@@ -205,19 +208,27 @@ class PaperTrader:
                 "counter": self._pos_counter,
                 "positions": [asdict(p) for p in self.positions],
             }
-            SAVE_FILE.write_text(json.dumps(data, indent=2))
+            payload = json.dumps(data, indent=2)
+            SAVE_FILE.write_text(payload)
+            SAVE_FILE_TMP.write_text(payload)  # резервная копия в /tmp
         except Exception as e:
             log.warning("Save failed: %s", e)
- 
+
     def _load(self):
-        if not SAVE_FILE.exists():
-            return
-        try:
-            data = json.loads(SAVE_FILE.read_text())
-            self.balance = data.get("balance", INITIAL_BALANCE)
-            self._pos_counter = data.get("counter", 0)
-            for pd in data.get("positions", []):
-                self.positions.append(Position(**pd))
-            log.info("Loaded %d positions from disk", len(self.positions))
-        except Exception as e:
-            log.warning("Load failed: %s", e)
+        # Пробуем загрузить из основного файла, потом из /tmp резервного
+        for path in [SAVE_FILE, SAVE_FILE_TMP]:
+            if not path.exists():
+                continue
+            try:
+                data = json.loads(path.read_text())
+                self.balance = data.get("balance", INITIAL_BALANCE)
+                self._pos_counter = data.get("counter", 0)
+                for pd in data.get("positions", []):
+                    try:
+                        self.positions.append(Position(**pd))
+                    except Exception:
+                        pass
+                log.info("Loaded %d positions from %s", len(self.positions), path)
+                return  # успешно загрузили
+            except Exception as e:
+                log.warning("Load failed from %s: %s", path, e)
