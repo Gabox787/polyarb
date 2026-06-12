@@ -218,3 +218,4 @@ class MarketScanner:
             if any(kw in q for kw in kws):
                 return coin
         return "GENERAL"
+        
