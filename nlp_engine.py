@@ -14,10 +14,7 @@ class Signal:
 
     @property
     def is_tradeable(self) -> bool:
-        # LOW urgency торгуем только если сентимент сильный (>=0.5)
-        # MEDIUM/HIGH торгуем при сентименте >=0.3
-        if self.urgency == "LOW":
-            return abs(self.sentiment) >= 0.5
+        # Торгуем любой сигнал с сентиментом >= 0.3
         return abs(self.sentiment) >= 0.3
 
     def __str__(self):
