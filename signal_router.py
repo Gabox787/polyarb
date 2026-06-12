@@ -53,6 +53,11 @@ def _is_crypto_market(question: str) -> bool:
     return any(kw in q for kw in CRYPTO_MARKET_KEYWORDS)
 
 
+def _is_5m_market(question: str) -> bool:
+    q = question.lower()
+    return any(kw in q for kw in ["up or down 5m", "btc updown", "5m", "5 min"])
+
+
 def route(signal: Signal, markets: list[PolyMarket]) -> list[TradeDecision]:
     """
     Given an NLP signal and a list of candidate markets,
@@ -76,6 +81,12 @@ def route(signal: Signal, markets: list[PolyMarket]) -> list[TradeDecision]:
         if btc_markets:
             markets = btc_markets
 
+    # Приоритет: 5-минутные BTC рынки
+    five_min_markets = [m for m in markets if _is_5m_market(m.question)]
+    if five_min_markets:
+        log.info("Using %d 5m BTC markets (priority)", len(five_min_markets))
+        markets = five_min_markets
+
     shift = _expected_price_shift(signal.sentiment)
     decisions = []
 
@@ -84,14 +95,18 @@ def route(signal: Signal, markets: list[PolyMarket]) -> list[TradeDecision]:
         if market.yes_price <= 0.01 or market.yes_price >= 0.99:
             continue
 
+        is_5m = _is_5m_market(market.question)
+
         if signal.sentiment > 0:
-            # bullish → buy YES (price should rise)
-            side = "YES"
+            side = "YES"  # bullish → BTC вырастет → UP
             edge = _compute_edge(market, "YES", abs(shift))
+            if is_5m:
+                edge = max(edge, 0.06)  # 5m рынки всегда имеют минимальный edge
         else:
-            # bearish → buy NO (YES price should fall)
-            side = "NO"
+            side = "NO"   # bearish → BTC упадёт → DOWN
             edge = _compute_edge(market, "NO", abs(shift))
+            if is_5m:
+                edge = max(edge, 0.06)
 
         if edge < MIN_EDGE:
             log.debug("Skip %s — edge %.3f < min %.3f",
