@@ -26,10 +26,22 @@ class Signal:
 URGENCY_WORDS = {
     "HIGH":   ["breaking", "just in", "urgent", "flash", "alert",
                "crash", "surge", "all-time high", "ath", "hack",
-               "exploit", "ban", "approved", "rejected"],
+               "exploit", "ban", "approved", "rejected", "shut down",
+               "arrested", "seized", "fined", "accused", "inflows", "outflows"],
     "MEDIUM": ["report", "says", "announces", "confirms", "warns",
-               "reveals", "launches", "files", "sues"],
+               "reveals", "launches", "files", "sues", "drops", "falls",
+               "rises", "jumps", "tumbles", "plunges"],
 }
+
+# Слова-маркеры аналитики — такие заголовки игнорируем
+OPINION_MARKERS = [
+    "analysis", "analyst", "analysts", "prediction", "predicts",
+    "could", "might", "may", "should", "would", "perhaps",
+    "here's why", "here is why", "this is why", "explains",
+    "what happens if", "what if", "scenario", "outlook",
+    "is this", "or is", "are we", "will we", "can bitcoin",
+    "reasons why", "top reasons", "everything you need",
+]
 
 AMPLIFIERS = ["massive", "huge", "major", "significant", "record",
               "biggest", "largest", "historic", "unprecedented"]
@@ -42,6 +54,10 @@ def analyze(headline: str, source: str = "") -> Signal | None:
     text = headline.lower()
     text_clean = re.sub(r"[^a-zа-я0-9 ]", " ", text)
     words = text_clean.split()
+
+    # --- пропускаем аналитику и мнения ---
+    if any(marker in text for marker in OPINION_MARKERS):
+        return None
 
     # --- detect coin ---
     coin = "GENERAL"
