@@ -24,6 +24,14 @@ BLOCKED_QUESTION_KEYWORDS = [
     "before gta",
 ]
 
+# Специальные 5-минутные BTC рынки — высший приоритет
+BTC_5M_KEYWORDS = [
+    "btc up or down 5m",
+    "btc updown",
+    "bitcoin up or down 5m",
+    "up or down 5m",
+]
+
 # How old (seconds) a last-trade timestamp can be and still count as "stale"
 STALE_THRESHOLD_SEC = 30
 
@@ -93,25 +101,37 @@ class MarketScanner:
         log.info("Cache: %d markets across %d coins", total, len(new_cache))
 
     async def _fetch_gamma_markets(self) -> list[dict]:
-        """Fetch active crypto markets from Gamma API - try multiple tag slugs."""
+        """Fetch BTC 5-minute markets + regular crypto markets."""
         url = f"{POLYMARKET_GAMMA_API}/markets"
         all_markets = []
-        # Try crypto-specific tags first, then broader search
+
+        # 1. Сначала ищем 5-минутные BTC рынки — главный приоритет
+        for q in ["btc up or down 5m", "btc updown 5m", "bitcoin up or down"]:
+            params = {"active": "true", "closed": "false", "q": q, "limit": 20}
+            try:
+                async with self._session.get(
+                    url, params=params,
+                    timeout=aiohttp.ClientTimeout(total=15)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        markets = data if isinstance(data, list) else data.get("markets", data.get("data", []))
+                        if markets:
+                            all_markets.extend(markets)
+                            log.info("5m BTC markets found: %d (query: %s)", len(markets), q)
+            except Exception as e:
+                log.warning("5m market fetch error: %s", e)
+
+        # 2. Обычные крипто-рынки как запасной вариант
         tag_slugs = ["crypto", "bitcoin", "cryptocurrency", "ethereum"]
         for tag_slug in tag_slugs:
-            params = {
-                "active": "true",
-                "closed": "false",
-                "tag_slug": tag_slug,
-                "limit": 100,
-            }
+            params = {"active": "true", "closed": "false", "tag_slug": tag_slug, "limit": 100}
             try:
                 async with self._session.get(
                     url, params=params,
                     timeout=aiohttp.ClientTimeout(total=15)
                 ) as resp:
                     if resp.status != 200:
-                        log.warning("Gamma API %d for tag %s", resp.status, tag_slug)
                         continue
                     data = await resp.json()
                     markets = data if isinstance(data, list) else data.get("markets", data.get("data", []))
@@ -119,22 +139,6 @@ class MarketScanner:
                     log.info("Tag %s: %d markets", tag_slug, len(markets))
             except Exception as e:
                 log.warning("Gamma fetch error for tag %s: %s", tag_slug, e)
-
-        # Also try searching by keyword if no crypto markets found
-        if not all_markets:
-            for keyword in ["bitcoin", "ethereum", "crypto", "btc"]:
-                params = {"active": "true", "closed": "false", "q": keyword, "limit": 30}
-                try:
-                    async with self._session.get(
-                        url, params=params,
-                        timeout=aiohttp.ClientTimeout(total=15)
-                    ) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            markets = data if isinstance(data, list) else data.get("markets", data.get("data", []))
-                            all_markets.extend(markets)
-                except Exception as e:
-                    log.warning("Keyword search error: %s", e)
 
         # Deduplicate by id
         seen = set()
