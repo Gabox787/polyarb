@@ -105,22 +105,35 @@ class MarketScanner:
         url = f"{POLYMARKET_GAMMA_API}/markets"
         all_markets = []
 
-        # 1. Сначала ищем 5-минутные BTC рынки — главный приоритет
-        for q in ["btc up or down 5m", "btc updown 5m", "bitcoin up or down"]:
-            params = {"active": "true", "closed": "false", "q": q, "limit": 20}
+        # 1. Сначала ищем 5-минутные BTC рынки через events API
+        import time
+        now_ts = int(time.time())
+        # Берём следующие 3 пятиминутных слота
+        slot = (now_ts // 300) * 300  # округляем до 5 минут
+        five_min_markets = []
+        events_url = f"{POLYMARKET_GAMMA_API}/events"
+        for i in range(1, 4):  # следующие 3 слота
+            ts = slot + i * 300
+            slug = f"btc-updown-5m-{ts}"
             try:
                 async with self._session.get(
-                    url, params=params,
-                    timeout=aiohttp.ClientTimeout(total=15)
+                    f"{events_url}?slug={slug}",
+                    timeout=aiohttp.ClientTimeout(total=10)
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        markets = data if isinstance(data, list) else data.get("markets", data.get("data", []))
-                        if markets:
-                            all_markets.extend(markets)
-                            log.info("5m BTC markets found: %d (query: %s)", len(markets), q)
+                        events = data if isinstance(data, list) else [data]
+                        for event in events:
+                            for m in event.get("markets", []):
+                                five_min_markets.append(m)
             except Exception as e:
-                log.warning("5m market fetch error: %s", e)
+                log.debug("5m slot %s error: %s", slug, e)
+
+        if five_min_markets:
+            all_markets.extend(five_min_markets)
+            log.info("5m BTC markets found: %d", len(five_min_markets))
+        else:
+            log.info("No 5m BTC markets found via events API")
 
         # 2. Обычные крипто-рынки как запасной вариант
         tag_slugs = ["crypto", "bitcoin", "cryptocurrency", "ethereum"]
@@ -218,4 +231,3 @@ class MarketScanner:
             if any(kw in q for kw in kws):
                 return coin
         return "GENERAL"
-        
