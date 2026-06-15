@@ -3,12 +3,12 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
- 
+
 import aiohttp
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message
- 
+
 from config import BOT_TOKEN, OWNER_ID
 from aggregator import NewsAggregator
 from nlp_engine import analyze
@@ -16,29 +16,29 @@ from market_scanner import MarketScanner
 from signal_router import route
 from paper_trader import PaperTrader
 import api_server
- 
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 log = logging.getLogger(__name__)
- 
+
 # ------------------------------------------------------------------ #
 #  Bot & dispatcher
 # ------------------------------------------------------------------ #
 bot = Bot(token=BOT_TOKEN)
 dp  = Dispatcher()
- 
+
 # Global state
 aggregator = NewsAggregator()
 scanner    = MarketScanner()
 trader     = PaperTrader()
- 
+
 running = False
 _task: asyncio.Task | None = None
 recent_news: list[dict] = []          # last 10 triggered news items
- 
- 
+
+
 # ------------------------------------------------------------------ #
 #  Owner-only guard
 # ------------------------------------------------------------------ #
@@ -51,15 +51,15 @@ def owner_only(func):
             return
         return await func(message, **kwargs)
     return wrapper
- 
- 
+
+
 # ------------------------------------------------------------------ #
 #  Main trading loop
 # ------------------------------------------------------------------ #
 async def trading_loop():
     global running, recent_news
     log.info("Trading loop started")
- 
+
     while running:
         try:
             news = await asyncio.wait_for(aggregator.get_news(), timeout=5.0)
@@ -70,15 +70,15 @@ async def trading_loop():
             log.warning("Queue error: %s", e)
             await asyncio.sleep(1)
             continue
- 
+
         # --- NLP ---
         signal = analyze(news.headline, news.source)
         if signal is None:
             log.info("SKIP (no signal): %s", news.headline[:60])
             continue
- 
+
         log.info("Signal: %s", signal)
- 
+
         # --- find markets ---
         stale_markets = await scanner.find_stale_markets(signal.coin)
         if not stale_markets:
@@ -87,15 +87,15 @@ async def trading_loop():
                 log.info("SKIP (no markets for %s): %s", signal.coin, news.headline[:50])
                 continue
             stale_markets = all_markets
- 
+
         log.info("Found %d markets for %s", len(stale_markets), signal.coin)
- 
+
         # --- route to trade ---
         decisions = route(signal, stale_markets)
         if not decisions:
             log.info("SKIP (no decisions after routing): %s", news.headline[:50])
             continue
- 
+
         # --- execute best trade ---
         decision = decisions[0]
         pos = trader.open_position(
@@ -103,7 +103,7 @@ async def trading_loop():
         )
         if pos is None:
             continue
- 
+
         # --- remember for /news command ---
         recent_news.insert(0, {
             "headline": news.headline,
@@ -117,7 +117,7 @@ async def trading_loop():
             "time":     datetime.now().strftime("%H:%M:%S"),
         })
         recent_news = recent_news[:10]
- 
+
         # --- Telegram notification ---
         sign = "📈" if signal.sentiment > 0 else "📉"
         text = (
@@ -134,55 +134,127 @@ async def trading_loop():
             f"🆔 {pos.pos_id}  |  💰 Баланс: ${trader.balance:.2f}"
         )
         await _notify(text)
- 
+
     log.info("Trading loop stopped")
- 
- 
+
+
+async def _check_5m_market_result(pos, session) -> tuple[bool, float, str]:
+    """Проверяем разрешился ли 5-минутный рынок через Gamma API."""
+    try:
+        url = f"https://gamma-api.polymarket.com/markets/{pos.market_id}"
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+            if resp.status != 200:
+                return False, pos.entry_price, ""
+            data = await resp.json()
+
+            # Проверяем resolved статус
+            resolved = data.get("resolved", False) or data.get("closed", False)
+            if not resolved:
+                return False, pos.entry_price, ""
+
+            # Получаем результат
+            outcome = str(data.get("resolution", data.get("resolvedPayouts", ""))).lower()
+            question = data.get("question", "").lower()
+
+            # Для 5m рынков: "Up" или "Down"
+            tokens = data.get("tokens", [])
+            for tok in tokens:
+                tok_outcome = str(tok.get("outcome", "")).upper()
+                winner = str(data.get("winner", "")).upper()
+                if winner and tok_outcome == winner:
+                    price = 1.0  # победитель
+                elif winner:
+                    price = 0.0  # проигравший
+                else:
+                    price = float(tok.get("price", pos.entry_price))
+
+                if tok_outcome == pos.side.upper():
+                    return True, price, winner
+
+            return True, pos.entry_price, outcome
+    except Exception as e:
+        log.debug("5m result check error: %s", e)
+        return False, pos.entry_price, ""
+
+
 async def _monitor_open_positions():
-    """Close positions by price movement OR by time (max 4 hours)."""
+    """Close positions: 5m markets by resolution, others by price/timeout."""
     if not trader.open_positions:
         return
- 
+
     import time
-    MAX_AGE = 4 * 3600  # 4 часа
- 
-    for pos in list(trader.open_positions):
-        age_sec = time.time() - pos.open_ts
-        current = pos.entry_price  # дефолт если рынок не найден
- 
-        markets = await scanner.find_markets(pos.coin)
-        target = next((m for m in markets if m.market_id == pos.market_id), None)
-        if target is not None:
-            current = target.yes_price if pos.side == "YES" else target.no_price
- 
-        pnl_ratio = (current - pos.entry_price) / pos.entry_price
-        if pos.side == "NO":
-            pnl_ratio = -pnl_ratio
- 
-        timeout = age_sec >= MAX_AGE
-        should_close = pnl_ratio >= 0.03 or pnl_ratio <= -0.08 or timeout
- 
-        if should_close:
-            pnl = trader.close_position(pos, current)
-            icon = "✅" if pnl > 0 else "❌"
-            reason = "таймаут 4ч" if timeout else ("тейк +3%" if pnl > 0 else "стоп -8%")
-            await _notify(
-                f"{icon} <b>Сделка закрыта</b> [{reason}]  {pos.pos_id}\n"
-                f"{'+'if pnl>=0 else ''}$<b>{abs(pnl):.4f}</b>\n"
-                f"{pos.question[:50]}\n"
-                f"Entry: {pos.entry_price:.4f} → Exit: {current:.4f}\n"
-                f"💰 Баланс: ${trader.balance:.2f}"
-            )
- 
- 
+    MAX_AGE = 15 * 60  # 15 минут максимум (5m рынок + буфер)
+
+    async with aiohttp.ClientSession() as session:
+        for pos in list(trader.open_positions):
+            age_sec = time.time() - pos.open_ts
+            is_5m = any(kw in pos.question.lower() for kw in ["up or down", "updown", "5m", "5:"])
+
+            if is_5m:
+                # Для 5m рынков — проверяем resolved статус
+                resolved, exit_price, winner = await _check_5m_market_result(pos, session)
+
+                if not resolved and age_sec < MAX_AGE:
+                    continue  # ещё не разрешился, ждём
+
+                if not resolved and age_sec >= MAX_AGE:
+                    # Таймаут — закрываем по текущей цене
+                    exit_price = pos.entry_price
+                    winner = "timeout"
+
+                pnl = trader.close_position(pos, exit_price)
+                icon = "✅" if pnl > 0 else "❌"
+
+                if winner == "timeout":
+                    reason = "таймаут 15 мин"
+                elif exit_price >= 0.9:
+                    reason = "WIN ✨"
+                else:
+                    reason = "LOSS"
+
+                await _notify(
+                    f"{icon} <b>5m сделка закрыта</b> [{reason}]\n"
+                    f"{'+'if pnl>=0 else ''}$<b>{abs(pnl):.4f}</b>\n"
+                    f"{pos.question[:55]}\n"
+                    f"Сторона: {pos.side} | Entry: {pos.entry_price:.4f} → Exit: {exit_price:.4f}\n"
+                    f"💰 Баланс: ${trader.balance:.2f}"
+                )
+            else:
+                # Для обычных рынков — по цене или таймауту 4ч
+                current = pos.entry_price
+                markets = await scanner.find_markets(pos.coin)
+                target = next((m for m in markets if m.market_id == pos.market_id), None)
+                if target is not None:
+                    current = target.yes_price if pos.side == "YES" else target.no_price
+
+                pnl_ratio = (current - pos.entry_price) / pos.entry_price
+                if pos.side == "NO":
+                    pnl_ratio = -pnl_ratio
+
+                timeout = age_sec >= 4 * 3600
+                should_close = pnl_ratio >= 0.03 or pnl_ratio <= -0.08 or timeout
+
+                if should_close:
+                    pnl = trader.close_position(pos, current)
+                    icon = "✅" if pnl > 0 else "❌"
+                    reason = "таймаут 4ч" if timeout else ("тейк +3%" if pnl > 0 else "стоп -8%")
+                    await _notify(
+                        f"{icon} <b>Сделка закрыта</b> [{reason}]  {pos.pos_id}\n"
+                        f"{'+'if pnl>=0 else ''}$<b>{abs(pnl):.4f}</b>\n"
+                        f"{pos.question[:50]}\n"
+                        f"Entry: {pos.entry_price:.4f} → Exit: {current:.4f}\n"
+                        f"💰 Баланс: ${trader.balance:.2f}"
+                    )
+
+
 async def _notify(text: str):
     if OWNER_ID:
         try:
             await bot.send_message(OWNER_ID, text, parse_mode="HTML")
         except Exception as e:
             log.warning("Notify failed: %s", e)
- 
- 
+
+
 # ------------------------------------------------------------------ #
 #  Telegram handlers
 # ------------------------------------------------------------------ #
@@ -203,8 +275,8 @@ async def cmd_start(message: Message):
         "Команды: /status /news /trades /stop",
         parse_mode="HTML"
     )
- 
- 
+
+
 @dp.message(Command("stop"))
 @owner_only
 async def cmd_stop(message: Message):
@@ -217,16 +289,16 @@ async def cmd_stop(message: Message):
     if _task:
         _task.cancel()
     await message.answer("⏹ Бот остановлен.")
- 
- 
+
+
 @dp.message(Command("status"))
 @owner_only
 async def cmd_status(message: Message):
     status = "🟢 ACTIVE" if running else "🔴 STOPPED"
     text = f"{status}\n\n{trader.stats_text()}"
     await message.answer(text, parse_mode="HTML")
- 
- 
+
+
 @dp.message(Command("news"))
 @owner_only
 async def cmd_news(message: Message):
@@ -242,14 +314,14 @@ async def cmd_news(message: Message):
             f"  {n['coin']} | {n['side']} | Edge {n['edge']*100:.1f}% | {n['pos_id']}\n"
         )
     await message.answer("\n".join(lines), parse_mode="HTML")
- 
- 
+
+
 @dp.message(Command("trades"))
 @owner_only
 async def cmd_trades(message: Message):
     await message.answer(trader.last_trades_text(7), parse_mode="HTML")
- 
- 
+
+
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     await message.answer(
@@ -261,8 +333,8 @@ async def cmd_help(message: Message):
         "/trades — последние закрытые сделки",
         parse_mode="HTML"
     )
- 
- 
+
+
 async def _fetch_btc_price_loop():
     """Фоновая задача — тянет цену BTC каждые 5 сек для графика.
     Пробует несколько источников: CoinGecko → Kraken → Bybit.
@@ -297,8 +369,8 @@ async def _fetch_btc_price_loop():
                 except Exception:
                     continue  # пробуем следующий источник
             await asyncio.sleep(30)  # 30 сек — достаточно для графика, не бьём rate limit
- 
- 
+
+
 # ------------------------------------------------------------------ #
 #  Entry point
 # ------------------------------------------------------------------ #
@@ -309,13 +381,13 @@ async def main():
     await aggregator.start()
     await scanner.start()
     asyncio.create_task(_fetch_btc_price_loop())
- 
+
     # Автостарт — запускаем торговлю сразу без ручного /start
     running = True
     api_server.set_running(True)
     _task = asyncio.create_task(trading_loop())
     log.info("Auto-started trading loop")
- 
+
     log.info("Starting bot polling…")
     try:
         await dp.start_polling(bot)
@@ -324,8 +396,8 @@ async def main():
         await scanner.stop()
         await api_server.stop()
         await bot.session.close()
- 
- 
+
+
 if __name__ == "__main__":
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN env var not set")
