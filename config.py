@@ -29,11 +29,12 @@ BULLISH_KEYWORDS = [
     "bitcoin etf", "upgrade", "mainnet", "partnership",
     "record high", "new high", "gain", "jump", "approve", "launch",
     "accumulate", "accumulation", "inflow", "inflows", "buys",
+    "rebounds", "rebound", "recovers", "recovery", "eases", "ease",
     "рост", "вырос", "одобр", "рекорд",
 ]
 
 BEARISH_KEYWORDS = [
-    "crash", "bloodbath", "dump", "bearish", "plunge", "fall", "ban", "hack",
+    "crash", "bloodbath", "dump", "bearish", "plunge", "ban", "hack",
     "exploit", "bankruptcy", "lawsuit", "fraud",
     "collapse", "fear", "drop", "decline", "warning", "risk",
     "sanction", "restrict", "blocked", "crackdown", "sell-off", "selloff",
