@@ -147,33 +147,48 @@ async def _check_5m_market_result(pos, session) -> tuple[bool, float, str]:
                 return False, pos.entry_price, ""
             data = await resp.json()
 
-            # Проверяем resolved статус
-            resolved = data.get("resolved", False) or data.get("closed", False)
-            if not resolved:
+            # Рынок закрыт если closed=true или active=false
+            closed = data.get("closed", False)
+            active = data.get("active", True)
+            if not closed and active:
                 return False, pos.entry_price, ""
 
-            # Получаем результат
-            outcome = str(data.get("resolution", data.get("resolvedPayouts", ""))).lower()
-            question = data.get("question", "").lower()
+            # outcomePrices — список цен ["1", "0"] или ["0", "1"]
+            # outcomes — список исходов ["Up", "Down"] или ["Yes", "No"]
+            outcome_prices = data.get("outcomePrices", [])
+            outcomes = data.get("outcomes", [])
 
-            # Для 5m рынков: "Up" или "Down"
+            log.info("5m market closed: outcomes=%s prices=%s", outcomes, outcome_prices)
+
+            if outcome_prices and outcomes:
+                for i, outcome_name in enumerate(outcomes):
+                    if i < len(outcome_prices):
+                        price = float(outcome_prices[i])
+                        # Сопоставляем с нашей стороной
+                        # YES/UP → outcomes[0], NO/DOWN → outcomes[1]
+                        our_side = pos.side.upper()
+                        outcome_up = outcome_name.upper()
+                        if our_side in (outcome_up, "YES" if outcome_up == "UP" else "UP" if outcome_up == "YES" else ""):
+                            return True, price, outcome_name
+
+                # Если не нашли по имени — берём по индексу
+                # YES/UP — обычно первый токен (index 0)
+                idx = 0 if pos.side.upper() in ("YES", "UP") else 1
+                if idx < len(outcome_prices):
+                    return True, float(outcome_prices[idx]), outcomes[idx] if idx < len(outcomes) else ""
+
+            # Fallback: смотрим tokens
             tokens = data.get("tokens", [])
             for tok in tokens:
                 tok_outcome = str(tok.get("outcome", "")).upper()
-                winner = str(data.get("winner", "")).upper()
-                if winner and tok_outcome == winner:
-                    price = 1.0  # победитель
-                elif winner:
-                    price = 0.0  # проигравший
-                else:
+                our_side = pos.side.upper()
+                if tok_outcome == our_side or (tok_outcome == "UP" and our_side == "YES") or (tok_outcome == "DOWN" and our_side == "NO"):
                     price = float(tok.get("price", pos.entry_price))
+                    return True, price, tok_outcome
 
-                if tok_outcome == pos.side.upper():
-                    return True, price, winner
-
-            return True, pos.entry_price, outcome
+            return True, pos.entry_price, "unknown"
     except Exception as e:
-        log.debug("5m result check error: %s", e)
+        log.warning("5m result check error: %s", e)
         return False, pos.entry_price, ""
 
 
