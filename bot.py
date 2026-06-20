@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import time
@@ -153,40 +154,32 @@ async def _check_5m_market_result(pos, session) -> tuple[bool, float, str]:
             if not closed and active:
                 return False, pos.entry_price, ""
 
-            # outcomePrices — список цен ["1", "0"] или ["0", "1"]
-            # outcomes — список исходов ["Up", "Down"] или ["Yes", "No"]
-            outcome_prices = data.get("outcomePrices", [])
-            outcomes = data.get("outcomes", [])
+            # outcomePrices и outcomes приходят как СТРОКИ с JSON внутри!
+            # например: '["0.52", "0.48"]' — нужен json.loads
+            raw_prices = data.get("outcomePrices", [])
+            raw_outcomes = data.get("outcomes", [])
+
+            try:
+                outcome_prices = json.loads(raw_prices) if isinstance(raw_prices, str) else raw_prices
+            except Exception:
+                outcome_prices = []
+            try:
+                outcomes = json.loads(raw_outcomes) if isinstance(raw_outcomes, str) else raw_outcomes
+            except Exception:
+                outcomes = []
 
             log.info("5m market closed: outcomes=%s prices=%s", outcomes, outcome_prices)
 
-            if outcome_prices and outcomes:
-                for i, outcome_name in enumerate(outcomes):
-                    if i < len(outcome_prices):
-                        price = float(outcome_prices[i])
-                        # Сопоставляем с нашей стороной
-                        # YES/UP → outcomes[0], NO/DOWN → outcomes[1]
-                        our_side = pos.side.upper()
-                        outcome_up = outcome_name.upper()
-                        if our_side in (outcome_up, "YES" if outcome_up == "UP" else "UP" if outcome_up == "YES" else ""):
-                            return True, price, outcome_name
+            if not outcome_prices or not outcomes or len(outcome_prices) < 2:
+                return True, pos.entry_price, "unknown"
 
-                # Если не нашли по имени — берём по индексу
-                # YES/UP — обычно первый токен (index 0)
-                idx = 0 if pos.side.upper() in ("YES", "UP") else 1
-                if idx < len(outcome_prices):
-                    return True, float(outcome_prices[idx]), outcomes[idx] if idx < len(outcomes) else ""
+            # Наша сторона: YES/UP всегда индекс 0, NO/DOWN всегда индекс 1
+            # (Polymarket конвенция: первый исход в списке — "положительный")
+            our_idx = 0 if pos.side.upper() in ("YES", "UP") else 1
+            price = float(outcome_prices[our_idx])
+            outcome_name = outcomes[our_idx] if our_idx < len(outcomes) else ""
 
-            # Fallback: смотрим tokens
-            tokens = data.get("tokens", [])
-            for tok in tokens:
-                tok_outcome = str(tok.get("outcome", "")).upper()
-                our_side = pos.side.upper()
-                if tok_outcome == our_side or (tok_outcome == "UP" and our_side == "YES") or (tok_outcome == "DOWN" and our_side == "NO"):
-                    price = float(tok.get("price", pos.entry_price))
-                    return True, price, tok_outcome
-
-            return True, pos.entry_price, "unknown"
+            return True, price, outcome_name
     except Exception as e:
         log.warning("5m result check error: %s", e)
         return False, pos.entry_price, ""
