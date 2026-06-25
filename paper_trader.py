@@ -114,8 +114,8 @@ class PaperTrader:
         self.balance -= BET_SIZE
         self.positions.append(pos)
         self._save()
-        log.info("OPEN  %s | %s @ %.4f | edge=%.1f%% | %s",
-                 pos.pos_id, side, price, edge * 100, market.question[:50])
+        log.info("OPEN  %s | %s @ %.4f | edge=%.1f%% | market_id=%s | %s",
+                 pos.pos_id, side, price, edge * 100, market.market_id, market.question[:50])
         return pos
 
     def close_position(self, pos: Position, current_price: float) -> float:
