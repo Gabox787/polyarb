@@ -204,7 +204,7 @@ async def _monitor_open_positions():
         return
 
     import time
-    MAX_AGE = 15 * 60  # 15 минут максимум (5m рынок + буфер)
+    MAX_AGE = 30 * 60  # 30 минут — даём время на оракул-урегулирование (Chainlink lag)
 
     async with aiohttp.ClientSession() as session:
         for pos in list(trader.open_positions):
