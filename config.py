@@ -4,6 +4,11 @@ import os
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 
+# Gemini API ключ для LLM-анализа новостей (опционально).
+# Если не задан — бот автоматически использует keyword-анализ как fallback.
+# Получить бесплатный ключ: https://aistudio.google.com/apikey
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+
 # RSS источники
 RSS_FEEDS = [
     {"name": "CoinDesk",      "url": "https://feeds.feedburner.com/CoinDesk"},
