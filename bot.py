@@ -13,6 +13,7 @@ from aiogram.types import Message
 from config import BOT_TOKEN, OWNER_ID
 from aggregator import NewsAggregator
 from nlp_engine import analyze
+from llm_analyzer import analyze_with_llm, LLMSignal
 from market_scanner import MarketScanner
 from signal_router import route
 from paper_trader import PaperTrader
@@ -34,6 +35,7 @@ dp  = Dispatcher()
 aggregator = NewsAggregator()
 scanner    = MarketScanner()
 trader     = PaperTrader()
+llm_session: aiohttp.ClientSession | None = None  # для запросов к Claude API
 
 running = False
 _task: asyncio.Task | None = None
@@ -72,8 +74,44 @@ async def trading_loop():
             await asyncio.sleep(1)
             continue
 
-        # --- NLP ---
-        signal = analyze(news.headline, news.source)
+        # --- NLP: сначала определяем монету через keywords (дешево, без LLM) ---
+        keyword_signal = analyze(news.headline, news.source)
+
+        # --- Пытаемся улучшить через LLM (Claude Haiku) ---
+        signal = keyword_signal
+        llm_result = None
+        if llm_session is not None:
+            try:
+                llm_result = await analyze_with_llm(news.headline, news.source, llm_session)
+            except Exception as e:
+                log.warning("LLM call failed: %s", e)
+                llm_result = None
+
+        if llm_result is not None:
+            # LLM дал результат — используем его sentiment/confidence,
+            # но coin берём из keyword-анализа (LLM не заточен угадывать тикер)
+            coin = keyword_signal.coin if keyword_signal else "GENERAL"
+            if llm_result.is_tradeable:
+                from nlp_engine import Signal as _Signal
+                urgency = "HIGH" if llm_result.confidence >= 0.7 else "MEDIUM"
+                signal = _Signal(
+                    coin=coin,
+                    sentiment=llm_result.sentiment,
+                    urgency=urgency,
+                    headline=news.headline,
+                    source=news.source,
+                    matched_keywords=[f"llm:{llm_result.reasoning[:40]}"],
+                )
+                log.info("Using LLM signal: %s", llm_result)
+            else:
+                log.info("LLM says not tradeable (%.2f): %s", llm_result.confidence, news.headline[:55])
+                continue
+        elif keyword_signal is None:
+            log.info("SKIP (no signal, LLM unavailable): %s", news.headline[:60])
+            continue
+        else:
+            log.info("LLM unavailable, falling back to keywords: %s", keyword_signal)
+
         if signal is None:
             log.info("SKIP (no signal): %s", news.headline[:60])
             continue
@@ -396,11 +434,12 @@ async def _fetch_btc_price_loop():
 #  Entry point
 # ------------------------------------------------------------------ #
 async def main():
-    global running, _task
+    global running, _task, llm_session
     api_server.init(trader, recent_news, {})
     await api_server.start(port=int(os.getenv("PORT", "8080")))
     await aggregator.start()
     await scanner.start()
+    llm_session = aiohttp.ClientSession()
     asyncio.create_task(_fetch_btc_price_loop())
 
     # Автостарт — запускаем торговлю сразу без ручного /start
@@ -416,6 +455,8 @@ async def main():
         await aggregator.stop()
         await scanner.stop()
         await api_server.stop()
+        if llm_session:
+            await llm_session.close()
         await bot.session.close()
 
 
